@@ -1,32 +1,33 @@
 ﻿//#define DEBUG_AsteraX_LogMethods
 //#define DEBUG_AsteraX_RespawnNotifications
+
 using System.Collections;
 using System.Collections.Generic;
 using UnityEngine;
+using UnityEngine.Events;
 
 public class AsteraX : MonoBehaviour
 {
-
-    // This is an automatic property
-    public static int           	SCORE { get; private set; }
-
-
     // Private Singleton-style instance. Accessed by static property S later in script
     static private AsteraX _S;
-
+    static public List<LevelInfo>   LEVEL_LIST;
     static List<Asteroid>           ASTEROIDS;
     static List<Bullet>             BULLETS;
+    static private bool             _PAUSED = false;
     static private eGameState       _GAME_STATE = eGameState.mainMenu;
+    static public bool              GOT_HIGH_SCORE = false;
     
-    // If you use a fully-qualified class name like this, you don't need "using UnityEngine.UI;" above.
-    static UnityEngine.UI.Text      SCORE_GT;
-    
+	// If you use a fully-qualified class name like this, you don't need "using UnityEngine.UI;" above.
+    static UnityEngine.UI.Text  	SCORE_GT;
+    // This is an automatic property
+    public static int           	SCORE { get; private set; }
     
     const float MIN_ASTEROID_DIST_FROM_PLAYER_SHIP = 5;
     const float DELAY_BEFORE_RELOADING_SCENE = 4;
 
 	public delegate void CallbackDelegate(); // Set up a generic delegate type.
-    static public CallbackDelegate GAME_STATE_CHANGE_DELEGATE;
+    static public event CallbackDelegate GAME_STATE_CHANGE_DELEGATE;
+    static public event CallbackDelegate PAUSED_CHANGE_DELEGATE;
     
 	public delegate void CallbackDelegateV3(Vector3 v); // Set up a Vector3 delegate type.
 
@@ -55,11 +56,19 @@ public class AsteraX : MonoBehaviour
     [Tooltip("This sets the AsteroidsScriptableObject to be used throughout the game.")]
     public AsteroidsScriptableObject asteroidsSO;
 
+    [Header("Set by Remote Settings")]
+    public string levelProgression = "1:3/2,2:4/2,3:3/3,4:4/3,5:5/3,6:3/4,7:4/4,8:5/4,9:6/4,10:3/5";
+
+
     [Header("These reflect static fields and are otherwise unused")]
     [SerializeField]
     [Tooltip("This private field shows the game state in the Inspector and is set by the "
         + "GAME_STATE_CHANGE_DELEGATE whenever GAME_STATE changes.")]
     protected eGameState  _gameState;
+    [SerializeField]
+    [Tooltip("This private field shows the game state in the Inspector and is set by the "
+    + "PAUSED_CHANGE_DELEGATE whenever PAUSED changes.")]
+    protected bool        _paused;
 
     private void Awake()
     {
@@ -69,26 +78,51 @@ public class AsteraX : MonoBehaviour
 
         S = this;
         
-		GAME_STATE_CHANGE_DELEGATE += delegate ()
-        {
-            // This is an example of a C# anonymous delegate. It's used to set the state of
-            //  _gameState every time GAME_STATE changes.
-            // Anonymous delegates like this do create "closures" like "this" below, which 
-            //  stores the value of this when the anonymous delegate was created. Closures
-            //  can be slow, but in this case, it is so rarely used that it doesn't matter.
-            this._gameState = AsteraX.GAME_STATE;
-            S._gameState = AsteraX.GAME_STATE;
-        };
+        // Rather than use the anonymous delegate that was here previously, I've instead
+        //  created a method that conforms to the GAME_STATE_CHANGE_DELEGATE, thereby 
+        //  avoiding the memory issues that can be caused by closures.
+        GAME_STATE_CHANGE_DELEGATE += GameStateChanged;
+        PAUSED_CHANGE_DELEGATE += PauseChanged;
         
-		// This strange use of _gameState as an intermediary in the following lines 
-        //  is solely to stop the Warning from popping up in the Console telling you 
+        // Below is another way of doing this that used a C# anonymous delegate.
+        // Anonymous delegates are disliked by Unity because of potential memory
+        //  leak issues, so I've removed it, though I still wanted to discuss them
+        //  here, hence this message and commented code.
+        //GAME_STATE_CHANGE_DELEGATE += delegate ()
+        //{
+        //    // This is an example of a C# anonymous delegate. It's used to set the state of
+        //    //  _gameState every time GAME_STATE changes.
+        //    // Anonymous delegates like this do create "closures" like "this" below, which 
+        //    //  stores the value of this when the anonymous delegate was created. Closures
+        //    //  can be slow, but in this case, it is so rarely used that it doesn't matter.
+        //    this._gameState = AsteraX.GAME_STATE;
+        //};
+        //PAUSED_CHANGE_DELEGATE += delegate ()
+        //{
+        //    this._paused = AsteraX.PAUSED;
+        //};
+        
+		// This strange use of _gameState and _paused as an intermediary in the following 
+		//  lines is solely to stop the Warning from popping up in the Console telling you 
         //  that _gameState was assigned but not used.
         _gameState = eGameState.mainMenu;
         GAME_STATE = _gameState;
+        _paused = true;
+        PauseGame(_paused);
+    }
+
+    void GameStateChanged() {
+        this._gameState = AsteraX.GAME_STATE;
+    }
+
+    void PauseChanged() {
+        this._paused = AsteraX.PAUSED;
     }
 
     private void OnDestroy()
     {
+        GAME_STATE_CHANGE_DELEGATE -= GameStateChanged;
+        PAUSED_CHANGE_DELEGATE -= PauseChanged;
         AsteraX.GAME_STATE = AsteraX.eGameState.none;
     }
 
@@ -97,18 +131,90 @@ public class AsteraX : MonoBehaviour
 #if DEBUG_AsteraX_LogMethods
         Debug.Log("AsteraX:Start()");
 #endif
+        // Register RemoteSettingsUpdated() to be called whenever RemoteSettings is updated.
+        RemoteSettings.Updated += RemoteSettingsUpdated;
+		
+		ParseLevelProgression();
 
         ASTEROIDS = new List<Asteroid>();
-		AddScore(0);
+        AddScore(0);
+
+        SaveGameManager.Load();
+    }
+
+
+    void StartLevel(int levelNum)
+    {
+#if DEBUG_AsteraX_LogMethods
+        Debug.Log("AsteraX:StartLevel("+levelNum+")");
+#endif
+        if (LEVEL_LIST.Count == 0)
+        {
+            Debug.LogError("AsteraX:StartLevel(" + levelNum + ") - LEVEL_LIST is empty!");
+            return;
+        }
+        if (levelNum >= LEVEL_LIST.Count)
+        {
+            levelNum = 1; // Just loop the levels for now. In a real game, this would be different.
+        }
+
+        GAME_STATE = eGameState.preLevel;
+        GAME_LEVEL = levelNum;
+        LevelInfo info = LEVEL_LIST[levelNum - 1];
+
+        // Destroy any remaining Asteroids, Bullets, etc. (including particle effects)
+        ClearAsteroids();
+        ClearBullets();
+        foreach (GameObject go in GameObject.FindGameObjectsWithTag("DestroyWithLevelChange"))
+        {
+            Destroy(go);
+        }
+
+        // Set up the asteroidsSO
+        asteroidsSO.numSmallerAsteroidsToSpawn = info.numSubAsteroids;
         
         // Spawn the parent Asteroids, child Asteroids are taken care of by them
-        for (int i = 0; i < 3; i++)
+        for (int i = 0; i < info.numInitialAsteroids; i++)
         {
             SpawnParentAsteroid(i);
         }
-        GAME_STATE = eGameState.level;
+
+        CustomAnalytics.SendLevelStart(GAME_LEVEL);
+        AchievementManager.AchievementStep(Achievement.eStepType.levelUp, levelNum);
+
     }
 
+    void EndLevel()
+    {
+#if DEBUG_AsteraX_LogMethods
+        Debug.Log("AsteraX:EndLevel()");
+#endif
+        if (GAME_STATE != eGameState.none)
+        {
+            PauseGame(true);
+            GAME_LEVEL++;
+            GAME_STATE = eGameState.postLevel;
+            LevelAdvancePanel.AdvanceLevel(LevelAdvanceDisplayCallback, LevelAdvanceIdleCallback);
+        }
+    }
+
+    void LevelAdvanceDisplayCallback()
+    {
+#if DEBUG_AsteraX_LogMethods
+        Debug.Log("AsteraX:LevelAdvanceDisplayCallback()");
+#endif
+        StartLevel(GAME_LEVEL);
+    }
+
+    void LevelAdvanceIdleCallback()
+    {
+#if DEBUG_AsteraX_LogMethods
+        Debug.Log("AsteraX:LevelAdvanceIdleCallback()");
+#endif
+        GAME_STATE = eGameState.level;
+
+        PauseGame(false); // unpause the game
+    }
 
     void SpawnParentAsteroid(int i)
     {
@@ -129,22 +235,188 @@ public class AsteraX : MonoBehaviour
         ast.size = asteroidsSO.initialSize;
     }
 
+    void ClearAsteroids()
+    {
+        // Some Asteroids in ASTEROIDS are children of others, so we should de-parent them
+        //  before destroying their parents. Because Asteroids were added with parents
+        //  first, working backwards through the ASTEROIDS List seems like a good way to
+        //  do this. By working backwards through ASTEROIDS, we also would avoid some issues
+        //  as Asteroids removed themselves from the ASTEROIDS list, but due to GAME_STATE
+        //  protections in RemoveAsteroid(), we don't have that problem.
+        Asteroid ast;
+        for (int i = ASTEROIDS.Count - 1; i >= 0; i--)
+        {
+            ast = ASTEROIDS[i];
+            ast.transform.SetParent(null); // De-parent the Asteroid
+            Destroy(ast.gameObject);
+        }
 
+        // Because of GAME_STATE protections in RemoveAsteroid(), destroying the Asteroids
+        //  above does NOT remove them from ASTEROIDS, so they need to be cleared now.
+        ASTEROIDS.Clear();
+    }
+
+    void ClearBullets()
+    {
+        if (BULLETS == null)
+        {
+            return;
+        }
+        // Bullets are much simpler to clear than Asteroids because there are no parent-child dependencies
+        // Because Bullet.OnDestroy() will in turn call AsteraX.RemoveBullet(), we need to work backwards through BULLETS
+        for (int i = BULLETS.Count - 1; i >= 0; i--)
+        {
+            Destroy(BULLETS[i].gameObject);
+        }
+    }
+
+
+    void ParseLevelProgression()
+    {
+        // This takes the information from levelProgression and puts it into LEVEL_LIST;
+        LEVEL_LIST = new List<LevelInfo>();
+
+        // NOTE: There are more performant and memory-friendly ways to do this parsing, but
+        //  since this only happens once per launch (or twice if updated by Remote Settings)
+        //  it's not worth it to worry too much about performance or memory.
+        // NOTE: There is little protection here for bad data in the levelProgression field. In 
+        //  an actual production environment, you would absolutely need to add more protection.
+        string[] levelStrings = levelProgression.Split(',');
+        for (int i = 0; i < levelStrings.Length; i++)
+        {
+            string[] levelBits = levelStrings[i].Split(':');
+            string levelName = "Level " + levelBits[0];
+            string[] asteroidStrings = levelBits[1].Split('/');
+            int numInitialAsteroids, numSubAsteroids;
+            if (!int.TryParse(asteroidStrings[0], out numInitialAsteroids)
+                || !int.TryParse(asteroidStrings[1], out numSubAsteroids))
+            {
+                Debug.LogError("AsteraX:ParseLevelProgression() - Attempt to parse bad asteroid numbers" +
+                               "for " + levelName + ": " + levelStrings[i]);
+                return; // This is throwing an error anyway, so we'll exit the method.
+            }
+            // We should have good data now
+            LevelInfo levelInfo = new LevelInfo(i + 1, levelName, numInitialAsteroids, numSubAsteroids);
+            LEVEL_LIST.Add(levelInfo);
+        }
+        Debug.Log("AsteraX:ParseLevelProgression() - Parsed levelProgression:\n" + levelProgression);
+    }
+
+    void RemoteSettingsUpdated()
+    {
+        string newLevelProgression = RemoteSettings.GetString("levelProgression", "");
+        if (newLevelProgression != "")
+        {
+            levelProgression = newLevelProgression;
+            Debug.Log("AsteraX:RemoteSettingsUpdated() - Calling ParseLevelProgression() "
+                  + "with levelProgression:\n" + levelProgression);
+            ParseLevelProgression();
+        }
+        else
+        {
+            Debug.Log("AsteraX:RemoteSettingsUpdated() - Did not receive proper " +
+                      "levelProgression from RemoteSettings.");
+        }
+    }
+
+    public void PauseGameToggle()
+    {
+        PauseGame(!PAUSED);
+    }
+
+    public void PauseGame(bool toPaused)
+    {
+        PAUSED = toPaused;
+        if (PAUSED)
+        {
+            Time.timeScale = 0;
+        }
+        else
+        {
+            Time.timeScale = 1;
+        }
+    }
+
+
+    private void Update()
+    {
+        if (GAME_STATE == eGameState.level && ASTEROIDS.Count == 0)
+        {
+            // The player has destroyed all the Asteroids and completed this level
+            if (_S != null)
+            {
+                _S.EndLevel();
+            }
+        }
+    }
+    
     
 	public void EndGame()
     {
         GAME_STATE = eGameState.gameOver;
         Invoke("ReloadScene", DELAY_BEFORE_RELOADING_SCENE);
     }
+    
 
     void ReloadScene()
     {
         // Reload the scene to restart the game
-        // This exposes a long-time Unity bug where reloading the scene 
-        // during gameplay within the Editor causes the lighting to all go 
-        // dark and the engine to think that it needs to rebuild the lighting.
-        // This bug does not cause any issues outside of the Editor.
+        // Note: This exposes a long-time Unity bug where reloading the scene 
+        //  during gameplay within the Editor causes the lighting to all go 
+        //  dark and the engine to think that it needs to rebuild the lighting.
+        //  This bug does not cause any issues outside of the Editor.
         UnityEngine.SceneManagement.SceneManager.LoadScene(0);
+    }
+
+
+
+
+
+    static public void AddAsteroid(Asteroid asteroid)
+    {
+        if (ASTEROIDS.IndexOf(asteroid) == -1)
+        {
+            ASTEROIDS.Add(asteroid);
+        }
+    }
+    static public void RemoveAsteroid(Asteroid asteroid)
+    {
+        if (GAME_STATE != eGameState.level)
+        {
+            // If this is not in the middle of a level, don't do anything. RemoveAsteroid is called
+            //  by Asteroid:OnDestroy(), so this prevents removal from happening if the game is in
+            //  any state other than level, which avoids modifying the ASTEROIDS List in the for 
+            //  loop of ClearAsteroids().
+            return;
+        }
+        if (ASTEROIDS.IndexOf(asteroid) != -1)
+        {
+            ASTEROIDS.Remove(asteroid);
+        }
+    }
+
+    static public void AddBullet(Bullet bullet)
+    {
+        if (BULLETS == null)
+        {
+            BULLETS = new List<Bullet>();
+        }
+        if (BULLETS.IndexOf(bullet) == -1)
+        {
+            BULLETS.Add(bullet);
+            
+            // Notify the AchievementManager that this has happened
+            AchievementManager.AchievementStep(Achievement.eStepType.bulletFired, 1);
+        }
+    }
+
+    static public void RemoveBullet(Bullet bullet)
+    {
+        if (BULLETS == null)
+        {
+            return;
+        }
+        BULLETS.Remove(bullet);
     }
 
 
@@ -152,7 +424,7 @@ public class AsteraX : MonoBehaviour
     // ---------------- Static Section ---------------- //
 
     /// <summary>
-    /// <para>This static public property provides some protection for the Singleton _S.</para>
+    /// <para>This static private property provides some protection for the Singleton _S.</para>
     /// <para>get {} does return null, but throws an error first.</para>
     /// <para>set {} allows overwrite of _S by a 2nd instance, but throws an error first.</para>
     /// <para>Another advantage of using a property here is that it allows you to place
@@ -193,6 +465,30 @@ public class AsteraX : MonoBehaviour
         }
     }
 
+    static public bool PAUSED
+    {
+        get
+        {
+            return _PAUSED;
+        }
+        private set
+        {
+            if (value != _PAUSED)
+            {
+                _PAUSED = value;
+                // Need to update all of the handlers
+                // Any time you use a delegate, you run the risk of it not having any handlers
+                //  assigned to it. In that case, it is null and will throw a null reference
+                //  exception if you try to call it. So *any* time you call a delegate, you 
+                //  should check beforehand to make sure it's not null.
+                if (PAUSED_CHANGE_DELEGATE != null)
+                {
+                    PAUSED_CHANGE_DELEGATE();
+                }
+            }
+
+        }
+    }
 
     static public eGameState GAME_STATE
     {
@@ -218,28 +514,63 @@ public class AsteraX : MonoBehaviour
         }
     }
 
-    
-	static public void AddAsteroid(Asteroid asteroid)
+    // This is called an automatic property. It allows protection of a static field and automatically
+    //  generates a static field that it reads and writes.
+    static public int GAME_LEVEL
     {
-        if (ASTEROIDS.IndexOf(asteroid) == -1)
-        {
-            ASTEROIDS.Add(asteroid);
-        }
+        get; private set;
     }
-    static public void RemoveAsteroid(Asteroid asteroid)
+
+    static public void StartGame()
     {
-        if (ASTEROIDS.IndexOf(asteroid) != -1)
+        GOT_HIGH_SCORE = false;
+        GAME_LEVEL = 0;
+        _S.EndLevel();
+    }
+
+    static public void GameOver()
+    {
+        SaveGameManager.CheckHighScore(SCORE);
+        SaveGameManager.Save();
+        CustomAnalytics.SendFinalShipPartChoice();
+        CustomAnalytics.SendGameOver();
+        _S.EndGame();
+    }
+
+
+	[System.Serializable]
+    public struct LevelInfo
+    {
+        public int levelNum;
+        public string levelName;
+        public int numInitialAsteroids;
+        public int numSubAsteroids;
+
+        public LevelInfo(int lNum, string name, int initial, int sub)
         {
-            ASTEROIDS.Remove(asteroid);
+            levelNum = lNum;
+            levelName = name;
+            numInitialAsteroids = initial;
+            numSubAsteroids = sub;
         }
     }
 
-    
-    static public void GameOver()
+
+    static public LevelInfo GetLevelInfo(int lNum = -1)
     {
-        _S.EndGame();
+        if (lNum == -1)
+        {
+            lNum = GAME_LEVEL;
+        }
+        // lNum is 1-based where LEVEL_LIST is 0-based, so LEVEL_LIST[0] is lNum 1
+        if (lNum < 1 || lNum > LEVEL_LIST.Count)
+        {
+            Debug.LogError("AsteraX:GetLevelInfo() - Requested level number of " + lNum + " does not exist.");
+            return new LevelInfo(-1, "NULL", 1, 1);
+        }
+        return (LEVEL_LIST[lNum - 1]);
     }
-    
+
     
 	static public void AddScore(int num)
     {
@@ -261,14 +592,23 @@ public class AsteraX : MonoBehaviour
         // SCORE holds the definitive score for the game.
         SCORE += num;
 
+        if ( !GOT_HIGH_SCORE && SaveGameManager.CheckHighScore(SCORE) ) {
+            // We just got the high score
+            GOT_HIGH_SCORE = true;
+            // Announce it using the AchievementPopUp
+            AchievementPopUp.ShowPopUp("High Score!","You've achieved a new high score.");
+        }
+
         // Show the score on screen. For info on numeric formatting like "N0", see:
         //  https://docs.microsoft.com/en-us/dotnet/standard/base-types/standard-numeric-format-strings
         SCORE_GT.text = SCORE.ToString("N0");
+        
+		AchievementManager.AchievementStep(Achievement.eStepType.scoreAttained, SCORE);
     }
 
 
     const int RESPAWN_DIVISIONS = 8;
-    const int RESPAWN_AVOID_EDGES = 2; // This number must be greater than 0!
+    const int RESPAWN_AVOID_EDGES = 2; // Note: This number must be greater than 0!
     static Vector3[,] RESPAWN_POINTS;
     /// <summary>
     /// <para>Given the point of the PlayerShip when it hit an Asteroid, this method
@@ -292,7 +632,7 @@ public class AsteraX : MonoBehaviour
         Debug.Log("AsteraX:FindRespawnPointCoroutine( "+prevPos+", [CallbackDelegateV3] )");
 #endif
         // Spawn particle effect for disappearing
-        //Instantiate(S.respawnDisappearParticlesPrefab, prevPos, Quaternion.identity);
+        Instantiate(PlayerShip.DISAPPEAR_PARTICLES, prevPos, Quaternion.identity);
 
         // Set up the RESPAWN_POINTS once
         if (RESPAWN_POINTS == null)
@@ -376,7 +716,7 @@ public class AsteraX : MonoBehaviour
         }
 
         // Spawn particle effect for appearing
-        //Instantiate(S.respawnAppearParticlesPrefab, nextPos, Quaternion.identity);
+        Instantiate(PlayerShip.APPEAR_PARTICLES, nextPos, Quaternion.identity);
 
         // Give the particle effect just a bit of time before the ship respawns
         yield return new WaitForSeconds(PlayerShip.RESPAWN_DELAY * 0.2f);

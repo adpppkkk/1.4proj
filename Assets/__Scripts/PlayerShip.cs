@@ -38,6 +38,10 @@ public class PlayerShip : MonoBehaviour
     public float        respawnDelay = 2;
     [Tooltip("The number of Jumps that the ship start the game with.")]
     public int          startingJumps = 3;
+    [Tooltip("The particle effect to show when the ship disappears for a Jump.")]
+    public GameObject   jumpDisappearParticlesPrefab;
+	[Tooltip("The particle effect to show when the ship reappears from a Jump.")]
+    public GameObject	jumpAppearParticlesPrefab;
 
     Rigidbody           rigid;
 
@@ -48,7 +52,7 @@ public class PlayerShip : MonoBehaviour
 
         JUMPS = startingJumps;
         
-        // We don't need to check whether or not rigid is null because of [RequireComponent()] above
+        // NOTE: We don't need to check whether or not rigid is null because of [RequireComponent()] above
         rigid = GetComponent<Rigidbody>();
     }
 
@@ -68,9 +72,9 @@ public class PlayerShip : MonoBehaviour
 
         rigid.velocity = vel * shipSpeed;
 
-        // Mouse input for firing
-        if (CrossPlatformInputManager.GetButtonDown("Fire1"))
-        {
+        // Mouse input
+		if (CrossPlatformInputManager.GetButtonDown("Fire1") && !AsteraX.PAUSED)
+		{
             Fire();
         }
     }
@@ -118,6 +122,13 @@ public class PlayerShip : MonoBehaviour
         Debug.Log("PlayerShip:Respawn()");
 #endif
         StartCoroutine(AsteraX.FindRespawnPointCoroutine(transform.position, RespawnCallback)); 
+
+        // Initially, I had made the gameObject inactive, but this caused the 
+        //  coroutine called above to never return from yield!
+        //gameObject.SetActive(false);
+
+        // Now, instead, I turn off the OffScreenWrapper and move the GameObject 
+        // outside the play area until  RespawnCallback is called.
         OffScreenWrapper wrapper = GetComponent<OffScreenWrapper>();
         if (wrapper != null) {
             wrapper.enabled = false;
@@ -162,4 +173,19 @@ public class PlayerShip : MonoBehaviour
         }
     }
 
+    static public GameObject DISAPPEAR_PARTICLES
+    {
+        get 
+        {
+            return S.jumpDisappearParticlesPrefab;
+        }
+    }
+
+    static public GameObject APPEAR_PARTICLES
+    {
+        get 
+        {
+            return S.jumpAppearParticlesPrefab;
+        }
+    }
 }

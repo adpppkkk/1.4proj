@@ -88,8 +88,12 @@ public class GameOverPanel : ActiveOnlyDuringSomeGameStates {
                 gameObject.SetActive(true);
                 // Set text            
                 levelRT.localScale = new Vector3(1,0,1);
-                infoText.text = "Final Level: " //+ AsteraX.GAME_LEVEL
-                    + "\nFinal Score: "+AsteraX.SCORE.ToString("N0");
+
+                // This is a ternary operator
+                levelText.text = AsteraX.GOT_HIGH_SCORE ? "High Score!" : "Game Over";
+
+                infoText.text = "Final Level: "+AsteraX.GAME_LEVEL+
+                    "\nFinal Score: "+AsteraX.SCORE.ToString("N0");
                 infoText.color = Color.clear;
                 // Set initial state
                 img.color = Color.clear;

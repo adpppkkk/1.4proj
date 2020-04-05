@@ -11,6 +11,13 @@ public class OffScreenWrapper : MonoBehaviour {
 
 	Bullet bulletScript;
 	
+    // This Start() method also forces the enabled Inspector checkbox to appear.
+    // From the Unity Docs:
+    // Note: There is a checkbox for disabling MonoBehaviours in the Unity Inspector.
+    //  It disables functions when unticked. If none of these functions are 
+    //  present in the script, the Editor does not display the checkbox.
+    //  The functions are: Start(), Update(), FixedUpdate(), LateUpdate(),
+    //  OnGUI(), OnDisable(), and OnEnable()
 	void Start(){
 		// Get the Bullet component of this GameObject if it exists.
 		// If there is no Bullet (Script) component, bulletScript will be null
@@ -18,9 +25,12 @@ public class OffScreenWrapper : MonoBehaviour {
     }
     
     // This is called whenever this GameObject exits the bounds of OnScreenBounds
+    // Note: As discussed in the long comment above, enabled/disabled of a
+    //  MonoBehavior only affects the functions listed above, and OnTriggerExit()
+    //  is called regardless of whether or not the MonoBehavior is enabled.
     private void OnTriggerExit(Collider other)
     {
-        // OnTriggerExit is still called when this.enabled==false
+        // NOTE: OnTriggerExit is still called when this.enabled==false
         if (!enabled)
         {
             return;
@@ -57,9 +67,9 @@ public class OffScreenWrapper : MonoBehaviour {
 
 
     /// <summary>
-    ///  Wraps this object to the other side of the screen when it has exited the 
+    /// Wraps this object to the other side of the screen when it has exited the 
     ///  OnScreenBounds BoxCollider.<para/><para/>
-    ///  this temporarily makes this.transform a child of OnScreenBounds.transform,
+    /// NOTE: this temporarily makes this.transform a child of OnScreenBounds.transform,
     ///  which works well for allowing the camera to rotate or change scale, however,
     ///  even though transform.SetParent() has the worldPositionStays parameter set to
     ///  true, this parental change still has an effect on this.transform.localScale,

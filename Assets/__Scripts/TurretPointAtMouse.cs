@@ -23,14 +23,14 @@ public class TurretPointAtMouse : MonoBehaviour {
 
     /// <summary>
     /// Point the turretTransform at the current Input.mousePositon.
-    /// <para>This will snap to position on mobile because the mouse is not always there</para>
-    /// <para>This only works for Cameras with a rotation of Quaternion.identity (i.e., Euler 
+    /// <para>Note: This will snap to position on mobile because the mouse is not always there</para>
+    /// <para>Note: This only works for Cameras with a rotation of Quaternion.identity (i.e., Euler 
     /// rotation of [0,0,0]) because it's attempting to project the mouse point onto the z=0 plane.</para>
     /// </summary>
     void PointAtMouse()
     {
         mousePoint3D = Camera.main.ScreenToWorldPoint(Input.mousePosition + Vector3.back * Camera.main.transform.position.z);
-        //  To prevent snapping on mobile, could possibly add a Slerp over a short time, but should 
+        // NOTE: To prevent snapping on mobile, could possibly add a Slerp over a short time, but should 
         //  still fire the shot immediately when the player taps (i.e., not wait for the turret to be 
         //  pointing in the right direction.
         transform.LookAt(mousePoint3D, Vector3.back);

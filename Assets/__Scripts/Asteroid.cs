@@ -22,7 +22,6 @@ public class Asteroid : MonoBehaviour
     OffScreenWrapper    offScreenWrapper;
 
 #if DEBUG_Asteroid_ShotOffscreenDebugLines
-    [Header("ShotOffscreenDebugLines")]
 	bool                trackOffscreen;
 	Vector3             trackOffscreenOrigin;
 #endif
@@ -51,7 +50,8 @@ public class Asteroid : MonoBehaviour
         if (size > 1)
         {
             Asteroid ast;
-            for (int i = 0; i < AsteraX.AsteroidsSO.numSmallerAsteroidsToSpawn; i++)
+            //for (int i=0; i<AsteraX.AsteroidsSO.numSmallerAsteroidsToSpawn; i++) {
+            for (int i = 0; i < AsteraX.GetLevelInfo().numSubAsteroids; i++)
             {
                 ast = SpawnAsteroid();
                 ast.size = size - 1;
@@ -145,7 +145,7 @@ public class Asteroid : MonoBehaviour
 	}
 #endif
 
-    //  Allowing parentIsAsteroid and parentAsteroid to call GetComponent<> every
+    // NOTE: Allowing parentIsAsteroid and parentAsteroid to call GetComponent<> every
     //  time is inefficient, however, this only happens when a bullet hits an Asteroid
     //  which is rarely enough that it isn't a performance hit.
     bool parentIsAsteroid
@@ -162,10 +162,10 @@ public class Asteroid : MonoBehaviour
         {
             if (transform.parent != null)
             {
-                Asteroid parentAsteroid = transform.parent.GetComponent<Asteroid>();
-                if (parentAsteroid != null)
+                Asteroid parentAst = transform.parent.GetComponent<Asteroid>();
+                if (parentAst != null)
                 {
-                    return parentAsteroid;
+                    return parentAst;
                 }
             }
             return null;
@@ -190,10 +190,19 @@ public class Asteroid : MonoBehaviour
 
         if (otherGO.tag == "Bullet" || otherGO.transform.root.gameObject.tag == "Player")
         {
-            if (otherGO.tag == "Bullet")
+            Bullet bull = otherGO.GetComponent<Bullet>();
+            if (bull != null)
             {
                 Destroy(otherGO);
-                AsteraX.AddScore( AsteraX.AsteroidsSO.pointsForAsteroidSize[size] );
+                AsteraX.AddScore(AsteraX.AsteroidsSO.pointsForAsteroidSize[size]);
+                
+                AchievementManager.AchievementStep(Achievement.eStepType.hitAsteroid, 1);
+
+                if (bull.bDidWrap) {
+                    // Because the second parameter (num) defaults to 1, there's 
+                    //  no need to pass it in.
+                    AchievementManager.AchievementStep(Achievement.eStepType.luckyShot);
+                }
             }
 
             if (size > 1)
@@ -212,16 +221,29 @@ public class Asteroid : MonoBehaviour
                 }
             }
 
+            InstantiateParticleSystem();
             Destroy(gameObject);
         }
     }
 
+    void InstantiateParticleSystem()
+    {
+        GameObject particleGO = Instantiate<GameObject>(AsteraX.AsteroidsSO.GetAsteroidParticlePrefab(), transform.position, Quaternion.identity);
+        ParticleSystem particleSys = particleGO.GetComponent<ParticleSystem>();
+        ParticleSystem.MainModule main = particleSys.main;
+        main.startLifetimeMultiplier = size * 0.5f;
+        ParticleSystem.EmissionModule emitter = particleSys.emission;
+        ParticleSystem.Burst burst = emitter.GetBurst(0);
+        ParticleSystem.MinMaxCurve burstCount = burst.count;
+        burstCount.constant = burstCount.constant * size;
+        burst.count = burstCount;
+        emitter.SetBurst(0, burst);
+    }
 
     private void Update()
     {
         immune = false;
     }
-
 
     static public Asteroid SpawnAsteroid()
     {

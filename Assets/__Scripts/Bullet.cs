@@ -16,19 +16,30 @@ public class Bullet : MonoBehaviour {
         }
     }
 
-    public float    bulletSpeed = 20;
-    public float    lifeTime = 2;
-    public bool     bDidWrap = false;
+    [Header("Set in Inspector")]
+    public float        bulletSpeed = 20;
+    public float        lifeTime = 2;
+    public GameObject   particleEffectPrefab;
+
+    [Header("Dynamic")]
+    public bool         bDidWrap = false;
 
     void Start()
     {
         transform.SetParent(BULLET_ANCHOR, true);
+
+        AsteraX.AddBullet(this);
 
         // Set Bullet to self-destruct in lifeTime seconds
         Invoke("DestroyMe", lifeTime);
 
         // Set the velocity of the Bullet
         GetComponent<Rigidbody>().velocity = transform.forward * bulletSpeed;
+
+        // Attach the particle effect
+        GameObject pe = Instantiate<GameObject>(particleEffectPrefab);
+        pe.transform.SetParent(transform);
+        pe.transform.localPosition = Vector3.zero;
     }
 
     void DestroyMe()
@@ -36,4 +47,8 @@ public class Bullet : MonoBehaviour {
         Destroy(gameObject);
     }
     
+    private void OnDestroy()
+    {
+        AsteraX.RemoveBullet(this);
+    }
 }
